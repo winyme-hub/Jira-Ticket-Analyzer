@@ -39,4 +39,23 @@ app.post('/api/analyze', async (req, res) => {
 
   const system = `You are a Jira ticket analyst for a Finance Operations team. Given a ticket, return ONLY a valid JSON object with exactly these keys:
 {"urgency":"Critical"|"High"|"Medium"|"Low","category":"Bug"|"Access Request"|"Process Issue"|"Data Error"|"Integration"|"Finance Ops"|"Reporting"|"Other","sentiment":"Frustrated"|"Urgent"|"Confused"|"Neutral"|"Satisfied","summary":"2-3 sentence plain English summary","next_actions":["action 1","action 2","action 3"],"reply":"Professional empathetic reply 3-5 sentences"}
-Return ONLY valid JSON. No m
+Return ONLY valid JSON. No markdown, no preamble.`;
+
+  try {
+    const response = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-api-key': ANTHROPIC_API_KEY, 'anthropic-version': '2023-06-01' },
+      body: JSON.stringify({ model: 'claude-sonnet-4-20250514', max_tokens: 1000, system, messages: [{ role: 'user', content: ticket }] }),
+    });
+    if (!response.ok) { const err = await response.json(); throw new Error(err.error?.message || `API error ${response.status}`); }
+    const data = await response.json();
+    const raw = data.content.map(b => b.text || '').join('').replace(/```json|```/g, '').trim();
+    const parsed = JSON.parse(raw);
+    return res.json({ result: parsed, user: { name: payload.name, email, picture: payload.picture } });
+  } catch (e) {
+    return res.status(500).json({ error: e.message || 'Analysis failed.' });
+  }
+});
+
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
