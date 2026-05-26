@@ -1,42 +1,282 @@
-const express = require('express');
-const { OAuth2Client } = require('google-auth-library');
-const fetch = (...args) => import('node-fetch').then(({ default: f }) => f(...args));
-const path = require('path');
-
-const app = express();
-app.use(express.json());
-app.use(express.static(path.join(__dirname)));
-
-const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID;
-const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY;
-const ALLOWED_DOMAIN = 'invisible.email';
-
-const client = new OAuth2Client(GOOGLE_CLIENT_ID);
-
-app.get('/config', (req, res) => {
-  res.json({ googleClientId: GOOGLE_CLIENT_ID });
-});
-
-async function verifyGoogleToken(token) {
-  const ticket = await client.verifyIdToken({
-    idToken: token,
-    audience: GOOGLE_CLIENT_ID,
-  });
-  return ticket.getPayload();
-}
-
-app.post('/api/analyze', async (req, res) => {
-  const { token, ticket } = req.body;
-  if (!token || !ticket) return res.status(400).json({ error: 'Missing token or ticket content.' });
-  let payload;
-  try {
-    payload = await verifyGoogleToken(token);
-  } catch (e) {
-    return res.status(401).json({ error: 'Invalid Google token. Please sign in again.' });
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Jira Ticket Analyzer</title>
+<link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500;600&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet" />
+<script src="https://accounts.google.com/gsi/client" async defer></script>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  :root {
+    --bg: #F7F6F2; --surface: #FFFFFF; --surface2: #F0EEE8;
+    --border: #E2DFD6; --border2: #CAC7BC; --text: #1A1917; --text2: #6B6860; --text3: #9E9B93;
+    --accent: #2D6A4F; --accent-light: #D8F0E5; --accent-text: #1A4433;
+    --red: #C0392B; --red-light: #FDECEA; --amber: #B7580A; --amber-light: #FEF0DC;
+    --blue: #1A4A7A; --blue-light: #E3EEFA; --purple: #4A2D8A; --purple-light: #EDE8FA;
+    --radius: 10px; --radius-sm: 6px;
   }
-  const email = payload.email || '';
-  if (!email.endsWith(`@${ALLOWED_DOMAIN}`)) return res.status(403).json({ error: `Access restricted to @${ALLOWED_DOMAIN} accounts.` });
+  body { font-family: 'DM Sans', sans-serif; background: var(--bg); color: var(--text); min-height: 100vh; }
+  header { background: var(--surface); border-bottom: 1px solid var(--border); padding: 0 2rem; height: 56px; display: flex; align-items: center; justify-content: space-between; }
+  .logo { display: flex; align-items: center; gap: 10px; font-size: 15px; font-weight: 600; }
+  .logo-icon { width: 28px; height: 28px; background: var(--accent); border-radius: 7px; display: flex; align-items: center; justify-content: center; }
+  .logo-icon svg { width: 15px; height: 15px; stroke: white; fill: none; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+  .user-pill { display: none; align-items: center; gap: 8px; background: var(--surface2); border: 1px solid var(--border); border-radius: 20px; padding: 4px 12px 4px 4px; font-size: 13px; color: var(--text2); cursor: pointer; }
+  .user-pill img { width: 24px; height: 24px; border-radius: 50%; object-fit: cover; }
+  .user-pill:hover { background: var(--border); }
+  #login-screen { display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: calc(100vh - 56px); padding: 2rem; }
+  .login-card { background: var(--surface); border: 1px solid var(--border); border-radius: 16px; padding: 2.5rem 2rem; width: 100%; max-width: 380px; text-align: center; }
+  .login-icon { width: 52px; height: 52px; background: var(--accent); border-radius: 13px; display: flex; align-items: center; justify-content: center; margin: 0 auto 1.25rem; }
+  .login-icon svg { width: 26px; height: 26px; stroke: white; fill: none; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+  .login-title { font-size: 20px; font-weight: 600; letter-spacing: -0.02em; margin-bottom: 6px; }
+  .login-sub { font-size: 14px; color: var(--text2); margin-bottom: 1.75rem; line-height: 1.6; }
+  .domain-badge { display: inline-block; font-size: 12px; font-weight: 500; background: var(--accent-light); color: var(--accent-text); border-radius: 20px; padding: 3px 10px; margin-bottom: 1.5rem; }
+  #google-signin-btn { display: flex; align-items: center; justify-content: center; gap: 10px; width: 100%; padding: 11px 20px; background: var(--surface); border: 1px solid var(--border2); border-radius: var(--radius-sm); font-family: 'DM Sans', sans-serif; font-size: 14px; font-weight: 500; color: var(--text); cursor: pointer; transition: background 0.15s; }
+  #google-signin-btn:hover { background: var(--surface2); }
+  #google-signin-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+  .login-note { font-size: 12px; color: var(--text3); margin-top: 1rem; }
+  #app-screen { display: none; }
+  main { max-width: 820px; margin: 0 auto; padding: 2.5rem 1.5rem; }
+  .page-title { font-size: 26px; font-weight: 600; letter-spacing: -0.03em; margin-bottom: 6px; }
+  .page-sub { font-size: 14px; color: var(--text2); margin-bottom: 2rem; }
+  .input-section { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 1.25rem; margin-bottom: 1rem; }
+  .input-label { font-size: 12px; font-weight: 500; color: var(--text3); text-transform: uppercase; letter-spacing: 0.07em; margin-bottom: 10px; }
+  textarea { width: 100%; min-height: 160px; font-family: 'DM Sans', sans-serif; font-size: 14px; line-height: 1.7; color: var(--text); background: var(--surface2); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 12px 14px; resize: vertical; outline: none; transition: border-color 0.15s; }
+  textarea:focus { border-color: var(--accent); }
+  textarea::placeholder { color: var(--text3); }
+  .actions { display: flex; gap: 8px; margin-top: 12px; }
+  .btn-primary { flex: 1; background: var(--accent); color: white; border: none; border-radius: var(--radius-sm); padding: 10px 20px; font-family: 'DM Sans', sans-serif; font-size: 14px; font-weight: 500; cursor: pointer; transition: opacity 0.15s, transform 0.1s; display: flex; align-items: center; justify-content: center; gap: 7px; }
+  .btn-primary:hover { opacity: 0.88; }
+  .btn-primary:active { transform: scale(0.98); }
+  .btn-primary:disabled { opacity: 0.5; cursor: not-allowed; }
+  .btn-secondary { background: var(--surface); color: var(--text2); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 10px 16px; font-family: 'DM Sans', sans-serif; font-size: 14px; cursor: pointer; transition: background 0.15s; }
+  .btn-secondary:hover { background: var(--surface2); }
+  .loading { display: none; align-items: center; gap: 10px; padding: 1.2rem 0; color: var(--text2); font-size: 14px; }
+  .spinner { width: 18px; height: 18px; border: 2px solid var(--border2); border-top-color: var(--accent); border-radius: 50%; animation: spin 0.7s linear infinite; flex-shrink: 0; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .results { display: none; margin-top: 1.5rem; animation: fadeUp 0.3s ease; }
+  @keyframes fadeUp { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
+  .badges-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 10px; margin-bottom: 14px; }
+  .badge-card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 12px 14px; }
+  .badge-card-label { font-size: 11px; font-weight: 500; color: var(--text3); text-transform: uppercase; letter-spacing: 0.07em; margin-bottom: 8px; }
+  .pill { display: inline-block; font-size: 12px; font-weight: 500; padding: 4px 10px; border-radius: 20px; }
+  .pill-red { background: var(--red-light); color: var(--red); }
+  .pill-amber { background: var(--amber-light); color: var(--amber); }
+  .pill-blue { background: var(--blue-light); color: var(--blue); }
+  .pill-green { background: var(--accent-light); color: var(--accent-text); }
+  .pill-purple { background: var(--purple-light); color: var(--purple); }
+  .pill-gray { background: var(--surface2); color: var(--text2); }
+  .result-block { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 1.1rem 1.25rem; margin-bottom: 10px; }
+  .result-block-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
+  .result-block-title { font-size: 11px; font-weight: 500; color: var(--text3); text-transform: uppercase; letter-spacing: 0.07em; }
+  .copy-btn { font-size: 12px; color: var(--text2); background: var(--surface2); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 4px 10px; cursor: pointer; font-family: 'DM Sans', sans-serif; transition: background 0.15s; display: flex; align-items: center; gap: 5px; }
+  .copy-btn:hover { background: var(--border); }
+  .result-text { font-size: 14px; color: var(--text); line-height: 1.75; }
+  .actions-list { list-style: none; padding: 0; }
+  .actions-list li { font-size: 14px; color: var(--text); line-height: 1.6; padding: 6px 0; border-bottom: 1px solid var(--border); display: flex; align-items: flex-start; gap: 9px; }
+  .actions-list li:last-child { border-bottom: none; padding-bottom: 0; }
+  .action-num { min-width: 20px; height: 20px; background: var(--surface2); border: 1px solid var(--border); border-radius: 50%; font-size: 11px; font-weight: 500; display: flex; align-items: center; justify-content: center; color: var(--text2); margin-top: 1px; }
+  .reply-box { font-family: 'DM Mono', monospace; font-size: 13px; line-height: 1.8; color: var(--text); background: var(--surface2); border-radius: var(--radius-sm); padding: 14px; white-space: pre-wrap; }
+  .error-bar { display: none; background: var(--red-light); border: 1px solid #F5C6C6; color: var(--red); border-radius: var(--radius-sm); padding: 10px 14px; font-size: 13px; margin-top: 10px; }
+  .kbd { font-size: 11px; color: var(--text3); background: var(--surface2); border: 1px solid var(--border); border-radius: 4px; padding: 2px 5px; font-family: 'DM Mono', monospace; }
+  footer { text-align: center; padding: 2rem; font-size: 12px; color: var(--text3); }
+</style>
+</head>
+<body>
+<header>
+  <div class="logo">
+    <div class="logo-icon">
+      <svg viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M8 12h8M8 8h5M8 16h3"/></svg>
+    </div>
+    Jira ticket analyzer
+  </div>
+  <div class="user-pill" id="user-pill" onclick="signOut()" title="Click to sign out">
+    <img id="user-avatar" src="" alt="" />
+    <span id="user-name"></span>
+    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
+  </div>
+</header>
 
-  const system = `You are a Jira ticket analyst for a Finance Operations team. Given a ticket, return ONLY a valid JSON object with exactly these keys:
-{"urgency":"Critical"|"High"|"Medium"|"Low","category":"Bug"|"Access Request"|"Process Issue"|"Data Error"|"Integration"|"Finance Ops"|"Reporting"|"Other","sentiment":"Frustrated"|"Urgent"|"Confused"|"Neutral"|"Satisfied","summary":"2-3 sentence plain English summary","next_actions":["action 1","action 2","action 3"],"reply":"Professional empathetic reply 3-5 sentences"}
-Return ONLY valid JSON. No m
+<div id="login-screen">
+  <div class="login-card">
+    <div class="login-icon">
+      <svg viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M8 12h8M8 8h5M8 16h3"/></svg>
+    </div>
+    <h1 class="login-title">Jira ticket analyzer</h1>
+    <p class="login-sub">Sign in with your work account to start analyzing tickets and drafting replies.</p>
+    <div class="domain-badge">@invisible.email only</div>
+    <br/>
+    <button id="google-signin-btn" onclick="startGoogleSignIn()">
+      <svg width="18" height="18" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+        <path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" fill="#4285F4"/>
+        <path d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" fill="#34A853"/>
+        <path d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z" fill="#FBBC05"/>
+        <path d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z" fill="#EA4335"/>
+      </svg>
+      Sign in with Google
+    </button>
+    <p class="login-note">You'll be signed out automatically when you close the tab.</p>
+    <div class="error-bar" id="login-error"></div>
+  </div>
+</div>
+
+<div id="app-screen">
+  <main>
+    <h1 class="page-title">Ticket analyzer</h1>
+    <p class="page-sub">Paste any Jira ticket to get a summary, urgency, drafted reply, and next actions.</p>
+    <div class="input-section">
+      <div class="input-label">Ticket content</div>
+      <textarea id="ticket-input" placeholder="Paste the full Jira ticket here — title, description, reporter, comments, anything you have..."></textarea>
+      <div class="actions">
+        <button class="btn-primary" id="analyze-btn" onclick="analyzeTicket()">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
+          Analyze ticket
+        </button>
+        <button class="btn-secondary" onclick="clearAll()">Clear</button>
+      </div>
+      <div style="margin-top:8px; font-size:12px; color:var(--text3);">Tip: Press <span class="kbd">Cmd</span> + <span class="kbd">Enter</span> to analyze</div>
+      <div class="error-bar" id="error-bar"></div>
+    </div>
+    <div class="loading" id="loading"><div class="spinner"></div><span>Analyzing ticket...</span></div>
+    <div class="results" id="results">
+      <div class="badges-row">
+        <div class="badge-card"><div class="badge-card-label">Urgency</div><div id="urgency-badge"></div></div>
+        <div class="badge-card"><div class="badge-card-label">Category</div><div id="category-badge"></div></div>
+        <div class="badge-card"><div class="badge-card-label">Sentiment</div><div id="sentiment-badge"></div></div>
+      </div>
+      <div class="result-block">
+        <div class="result-block-header"><span class="result-block-title">Summary</span></div>
+        <div class="result-text" id="summary-text"></div>
+      </div>
+      <div class="result-block">
+        <div class="result-block-header"><span class="result-block-title">Suggested next actions</span></div>
+        <ul class="actions-list" id="next-actions"></ul>
+      </div>
+      <div class="result-block">
+        <div class="result-block-header">
+          <span class="result-block-title">Drafted reply</span>
+          <button class="copy-btn" id="copy-btn" onclick="copyReply()">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+            Copy reply
+          </button>
+        </div>
+        <div class="reply-box" id="reply-text"></div>
+      </div>
+    </div>
+  </main>
+  <footer>Built for Finance Ops · Powered by Claude AI</footer>
+</div>
+
+<script>
+  let googleToken = null;
+  let googleClientId = null;
+
+  async function loadConfig() {
+    try {
+      const res = await fetch('/config');
+      const data = await res.json();
+      googleClientId = data.googleClientId;
+      document.getElementById('google-signin-btn').disabled = false;
+    } catch(e) {
+      console.error('Failed to load config', e);
+    }
+  }
+
+  function startGoogleSignIn() {
+    if (!googleClientId) { alert('Config not loaded yet, please try again in a moment.'); return; }
+    google.accounts.id.initialize({
+      client_id: googleClientId,
+      callback: handleCredentialResponse,
+      auto_select: false,
+    });
+    google.accounts.id.prompt();
+  }
+
+  function handleCredentialResponse(response) {
+    googleToken = response.credential;
+    const payload = JSON.parse(atob(googleToken.split('.')[1]));
+    const email = payload.email || '';
+    if (!email.endsWith('@invisible.email')) {
+      document.getElementById('login-error').textContent = 'Access restricted to @invisible.email accounts.';
+      document.getElementById('login-error').style.display = 'block';
+      googleToken = null;
+      return;
+    }
+    document.getElementById('user-name').textContent = payload.name || email;
+    document.getElementById('user-avatar').src = payload.picture || '';
+    document.getElementById('user-pill').style.display = 'flex';
+    document.getElementById('login-screen').style.display = 'none';
+    document.getElementById('app-screen').style.display = 'block';
+  }
+
+  function signOut() {
+    googleToken = null;
+    document.getElementById('user-pill').style.display = 'none';
+    document.getElementById('app-screen').style.display = 'none';
+    document.getElementById('login-screen').style.display = 'flex';
+    clearAll();
+  }
+
+  async function analyzeTicket() {
+    const input = document.getElementById('ticket-input').value.trim();
+    if (!input) { showError('Please paste a Jira ticket first.'); return; }
+    if (!googleToken) { showError('Session expired. Please sign in again.'); signOut(); return; }
+    document.getElementById('error-bar').style.display = 'none';
+    document.getElementById('loading').style.display = 'flex';
+    document.getElementById('results').style.display = 'none';
+    document.getElementById('analyze-btn').disabled = true;
+    try {
+      const res = await fetch('/api/analyze', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ token: googleToken, ticket: input }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Analysis failed.');
+      const p = data.result;
+      const urgencyMap = { Critical: 'pill-red', High: 'pill-amber', Medium: 'pill-blue', Low: 'pill-green' };
+      const sentimentMap = { Frustrated: 'pill-red', Urgent: 'pill-amber', Confused: 'pill-amber', Neutral: 'pill-gray', Satisfied: 'pill-green' };
+      document.getElementById('urgency-badge').innerHTML = `<span class="pill ${urgencyMap[p.urgency] || 'pill-blue'}">${p.urgency}</span>`;
+      document.getElementById('category-badge').innerHTML = `<span class="pill pill-purple">${p.category}</span>`;
+      document.getElementById('sentiment-badge').innerHTML = `<span class="pill ${sentimentMap[p.sentiment] || 'pill-gray'}">${p.sentiment}</span>`;
+      document.getElementById('summary-text').textContent = p.summary;
+      const ul = document.getElementById('next-actions');
+      ul.innerHTML = '';
+      (p.next_actions || []).forEach((a, i) => { ul.innerHTML += `<li><span class="action-num">${i + 1}</span><span>${a}</span></li>`; });
+      document.getElementById('reply-text').textContent = p.reply;
+      document.getElementById('results').style.display = 'block';
+      document.getElementById('results').scrollIntoView({ behavior: 'smooth', block: 'start' });
+    } catch (e) {
+      showError(e.message || 'Something went wrong. Please try again.');
+    }
+    document.getElementById('loading').style.display = 'none';
+    document.getElementById('analyze-btn').disabled = false;
+  }
+
+  function showError(msg) {
+    const bar = document.getElementById('error-bar');
+    bar.textContent = msg;
+    bar.style.display = 'block';
+  }
+
+  function clearAll() {
+    document.getElementById('ticket-input').value = '';
+    document.getElementById('results').style.display = 'none';
+    document.getElementById('error-bar').style.display = 'none';
+  }
+
+  function copyReply() {
+    const text = document.getElementById('reply-text').textContent;
+    navigator.clipboard.writeText(text).then(() => {
+      const btn = document.getElementById('copy-btn');
+      btn.innerHTML = `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg> Copied!`;
+      setTimeout(() => { btn.innerHTML = `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg> Copy reply`; }, 2000);
+    });
+  }
+
+  document.addEventListener('keydown', e => { if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') analyzeTicket(); });
+
+  loadConfig();
+</script>
+</body>
+</html>
