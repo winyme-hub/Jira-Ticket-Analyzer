@@ -45,7 +45,7 @@ Return ONLY valid JSON. No markdown, no preamble.`;
     const response = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'x-api-key': ANTHROPIC_API_KEY, 'anthropic-version': '2023-06-01' },
-      body: JSON.stringify({ model: 'claude-sonnet-4-20250514', max_tokens: 1000, system, messages: [{ role: 'user', content: ticket }] }),
+      body: JSON.stringify({ model: 'claude-sonnet-4-5', max_tokens: 1000, system, messages: [{ role: 'user', content: ticket }] }),
     });
     if (!response.ok) { const err = await response.json(); throw new Error(err.error?.message || `API error ${response.status}`); }
     const data = await response.json();
