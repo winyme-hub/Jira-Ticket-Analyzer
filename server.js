@@ -6,12 +6,16 @@ const path = require('path');
 const app = express();
 app.use(express.json());
 app.use(express.static(path.join(__dirname)));
-app.use(express.static(path.join(__dirname)));
+
 const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID;
 const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY;
 const ALLOWED_DOMAIN = 'invisible.email';
 
 const client = new OAuth2Client(GOOGLE_CLIENT_ID);
+
+app.get('/config', (req, res) => {
+  res.json({ googleClientId: GOOGLE_CLIENT_ID });
+});
 
 async function verifyGoogleToken(token) {
   const ticket = await client.verifyIdToken({
